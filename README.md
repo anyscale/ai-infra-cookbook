@@ -2,14 +2,11 @@
 
 Runnable examples for every stage of the LLM lifecycle — **curate → train → post-train → serve** — built entirely on open-source frontier infrastructure, orchestrated by [Ray](https://github.com/ray-project/ray), and runnable with one command on [Anyscale](https://www.anyscale.com).
 
-Each directory is a self-contained example: code, a Dockerfile, and an Anyscale `job.yaml` or `service.yaml`. The examples chain together — the corpus you curate feeds the model you fine-tune, the checkpoint you align is the model you serve — so you can follow the full pipeline or jump straight to the stage you care about.
 
 ## The map
 
 <img width="1504" height="626" alt="image" src="https://github.com/user-attachments/assets/386b3fd0-0a0e-427b-b491-20f00fdca4bc" />
 
-
-Solid arrows are artifact flow (a corpus, a checkpoint); dashed arrows are conceptual feeds and related approaches. The same map is browsable as an [interactive explorer](#interactive-explorer) with guided journeys, search, and per-example run commands.
 
 ## Start here
 
@@ -109,20 +106,8 @@ This cookbook exists because of the open-source projects below. Each example's R
 | [Run:ai Model Streamer](https://github.com/run-ai/runai-model-streamer) | Concurrent weight streaming to GPU | fast_model_loading_gcs_nvme |
 | [Gradio](https://github.com/gradio-app/gradio) | Interactive ML UIs | video_generation_with_fastvideo |
 | [Locust](https://github.com/locustio/locust) | Load testing | wide_ep_fault_tolerance |
-| [uv](https://github.com/astral-sh/uv) | Fast Python environment management | skyrl, wide_ep_fault_tolerance, lerobot_datasource |
-| [PyAV](https://github.com/PyAV-Org/PyAV) | Video decoding | lerobot_datasource |
 
-## Interactive explorer
 
-The [`site/`](site/) directory contains an interactive map of this repository: pan and zoom the pipeline, follow guided journeys step by step, search everything with `⌘K`, and copy run commands per example.
-
-```bash
-cd site
-npm install
-npm run dev
-```
-
-The site is a static Vite + React build, deployable to GitHub Pages via the included [workflow](.github/workflows/deploy-site.yml) once Pages is enabled for the repository (Settings → Pages → Source: GitHub Actions). See [site/README.md](site/README.md) for details.
 
 ## Running the examples
 
