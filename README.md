@@ -22,7 +22,7 @@ Curated trails through the map. Follow one top to bottom — each stop builds on
 [fineweb_dedup](fineweb_dedup/) → [megatron_training](megatron_training/) → [skyrl](skyrl/) → [deploy_llama_3_8b](deploy_llama_3_8b/) → [wide_ep_fault_tolerance](wide_ep_fault_tolerance/)
 
 **Pretraining data factory** — web-scale curation across text, image, and video.
-[fineweb_dedup](fineweb_dedup/) → [image_processing](image_processing/) → [video_curation](video_curation/)
+[fineweb_dedup](fineweb_dedup/) → [image_processing](image_processing/) → [video_curation](video_curation/) → [video_captioning](video_captioning/)
 
 **Train and align** — from a first distributed run to Megatron-parallel SFT to RL.
 [jax_training](jax_training/) → [megatron_training](megatron_training/) → [skyrl](skyrl/)
@@ -45,6 +45,7 @@ Curated trails through the map. Follow one top to bottom — each stop builds on
 | [fineweb_dedup](fineweb_dedup/) | Clean, filter, and MinHash-dedup the FineWeb-edu corpus | Data-Juicer, Ray Data | job |
 | [image_processing](image_processing/) | Caption 2B image URLs with a vision-language model | Ray Data, vLLM, Qwen2.5-VL | job |
 | [video_curation](video_curation/) | Stream raw video into annotated, embedded clip datasets | Ray Data, vLLM, CLIP | job |
+| [video_captioning](video_captioning/) | Caption video at scale, comparing raw Ray Core against Ray Data | Ray Core, Ray Data, vLLM, Qwen3-VL | job |
 
 ### 2 · Train — distributed training on heterogeneous clusters
 
@@ -88,7 +89,7 @@ This cookbook exists because of the open-source projects below. Each example's R
 | Project | What it does here | Used in |
 |---|---|---|
 | [Ray](https://github.com/ray-project/ray) | Distributed compute engine under everything: Ray Data, Ray Train, Ray Serve, Ray Core | all examples |
-| [vLLM](https://github.com/vllm-project/vllm) | High-throughput LLM inference engine | image_processing, video_curation, skyrl, deploy_llama_3_8b, deploy_llama_3_1_70b, wide_ep_fault_tolerance, fast_model_loading_gcs_nvme |
+| [vLLM](https://github.com/vllm-project/vllm) | High-throughput LLM inference engine | image_processing, video_curation, video_captioning, skyrl, deploy_llama_3_8b, deploy_llama_3_1_70b, wide_ep_fault_tolerance, fast_model_loading_gcs_nvme |
 | [SGLang](https://github.com/sgl-project/sglang) | Tensor- and pipeline-parallel inference engine | sglang_inference |
 | [Megatron-LM](https://github.com/NVIDIA/Megatron-LM) | Parallel transformer training core | megatron_training |
 | [Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge) | Hugging Face ↔ Megatron bridge and training recipes | megatron_training |

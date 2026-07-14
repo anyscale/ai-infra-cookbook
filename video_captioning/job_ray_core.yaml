@@ -1,0 +1,59 @@
+name: video-captioning-ray-core
+
+containerfile: ./Dockerfile
+
+# Same cluster shape as job_ray_data.yaml — the Ray Core baseline runs on
+# identical hardware so the two reports compare apples to apples.
+compute_config:
+  cloud: rkn-gpu-cloud
+  cloud_resource: coreweave-use14a
+
+  advanced_instance_config:
+    metadata:
+      labels:
+        kueue.x-k8s.io/queue-name: default-queue
+
+  # Head node is control-plane only (no GPU) — GPUs live in the worker pool.
+  head_node:
+    required_resources:
+      CPU: 32
+      memory: 128Gi
+
+  worker_nodes:
+    # ── GPU pool: one Qwen3-VL-8B engine per RTX PRO 6000 (8 GPUs/node) ────
+    # SCALE LADDER — set min_nodes = max_nodes AND pass --env EXPECTED_GPUS:
+    #    8 GPUs (smoke) -> 1 node,   EXPECTED_GPUS=8
+    #   64 GPUs         -> 8 nodes,  EXPECTED_GPUS=64
+    #  256 GPUs         -> 32 nodes, EXPECTED_GPUS=256
+    - required_resources:
+        CPU: 120
+        memory: 960Gi
+        GPU: 8
+      required_labels:
+        ray.io/accelerator-type: RTX-PRO-6000
+      advanced_instance_config:
+        metadata:
+          labels:
+            kueue.x-k8s.io/queue-name: default-queue
+      min_nodes: 1
+      max_nodes: 1
+
+    # ── CPU-only pool: shard reads + decode tasks ──────────────────────────
+    - required_resources:
+        CPU: 120
+        memory: 480Gi
+      labels:
+        cpu_only: "true"
+      advanced_instance_config:
+        metadata:
+          labels:
+            kueue.x-k8s.io/queue-name: default-queue
+      min_nodes: 1
+      max_nodes: 8
+
+working_dir: .
+
+entrypoint: python caption_ray_core.py ${NUM_VIDEOS:+--num-videos ${NUM_VIDEOS}} ${INPUT:+--input ${INPUT}} ${OUTPUT:+--output ${OUTPUT}}
+
+max_retries: 2
+timeout_s: 86400
