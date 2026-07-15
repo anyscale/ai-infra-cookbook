@@ -1,0 +1,22 @@
+name: cosmos-curate-hello-world
+image_uri: 367974485317.dkr.ecr.us-west-2.amazonaws.com/anyscale-cosmos-curate:6
+ray_version: 2.48.0
+entrypoint: >
+  python all_nodes_init_script.py gpt2
+  && pixi run python -m cosmos_curate.pipelines.examples.hello_world_pipeline
+py_modules: ["./cosmos-curate"]
+compute_config:
+  head_node:
+    instance_type: m5.2xlarge 
+    resources:
+      CPU: 8
+      GPU: 0
+    flags: {}
+  worker_nodes:
+    - instance_type: g4dn.xlarge
+      flags: {}
+      min_nodes: 1
+      max_nodes: 1
+      market_type: ON_DEMAND
+working_dir: "."
+max_retries: 0
