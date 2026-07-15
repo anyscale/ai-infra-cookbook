@@ -1,0 +1,29 @@
+# Anyscale job config: Slime multi-node RL training
+# Qwen3-1.7B GRPO on 2 worker nodes × 4x A10G (8 GPUs total)
+#
+# Layout:
+#   Head node (m5.2xlarge): driver only, no GPUs
+#   Worker 0 (4 GPUs): [GPU 0-1: Training TP=2, PP Stage 0] [GPU 2-3: Rollout]
+#   Worker 1 (4 GPUs): [GPU 0-1: Training TP=2, PP Stage 1] [GPU 2-3: Rollout]
+#
+# Submit with:
+#   cd examples/slime_multi_node_rl
+#   anyscale job submit -f job.yaml
+
+name: slime-qwen3-1.7b-rl-2node-a10g
+
+containerfile: ./Dockerfile.anyscale
+
+compute_config:
+  head_node:
+    instance_type: m5.2xlarge       # CPU-only, runs driver script
+  worker_nodes:
+    - instance_type: g5.12xlarge    # 4x A10G, 48 vCPU, 192 GB RAM
+      min_nodes: 2
+      max_nodes: 2
+
+working_dir: .
+
+entrypoint: bash anyscale-smoke-2node-a10g.sh
+
+max_retries: 0
