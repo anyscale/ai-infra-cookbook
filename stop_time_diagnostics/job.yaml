@@ -1,0 +1,30 @@
+# GPU diagnostics job configuration
+# Run GPU health and NCCL communication tests on a Ray cluster
+
+name: stop-time-diagnostics
+
+# Use a base image with CUDA support
+image_uri: anyscale/ray:2.52.0-slim-py312-cu128
+
+compute_config:
+  worker_nodes:
+    - instance_type: g5.12xlarge
+      min_nodes: 3
+      max_nodes: 3
+  min_resources:
+    CPU: 0
+    GPU: 0
+  max_resources:
+    CPU: 144
+    GPU: 12
+
+working_dir: .
+
+env_vars:
+  NCCL_P2P_DISABLE: "1"
+  NCCL_SHM_DISABLE: "1"
+
+# Run diagnostics on 8 GPUs (triggers auto-scaling)
+entrypoint: uv run --isolated main.py --num-gpus 8
+
+max_retries: 0
