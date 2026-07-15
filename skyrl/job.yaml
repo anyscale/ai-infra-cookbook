@@ -49,7 +49,7 @@ entrypoint: |
   uv run --isolated examples/gsm8k/gsm8k_dataset.py --output_dir $DATA_DIR && \
   uv run --isolated \
     --extra vllm \
-    --with ray@http://localhost:9478/ray/ray-2.48.0-cp312-cp312-manylinux2014_x86_64.whl \
+    --with ray@http://localhost:9478/ray/ray-2.52.1-cp312-cp312-manylinux2014_x86_64.whl \
     -m skyrl_train.entrypoints.main_base \
     data.train_data="['$DATA_DIR/train.parquet']" \
     data.val_data="['$DATA_DIR/validation.parquet']" \

@@ -1,4 +1,4 @@
-FROM anyscale/ray:2.48.0-slim-py312-cu128
+FROM anyscale/ray:2.52.1-slim-py312-cu128
 
 RUN sudo apt-get update -y \
     && sudo apt-get install --no-install-recommends -y build-essential libnuma-dev \

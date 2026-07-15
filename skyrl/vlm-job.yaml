@@ -1,0 +1,93 @@
+# View the docs https://docs.anyscale.com/reference/job-api#jobconfig.
+
+name: skyrl-vlm-geometry3k
+
+containerfile: ./Dockerfile
+
+# Requests a single worker node with 4x L40S GPUs. To train the larger
+# Qwen3-VL-8B-Instruct instead, bump to 8x H100 (or similar) and raise
+# policy_num_gpus_per_node / num_engines to match.
+compute_config:
+  head_node:
+    required_resources:
+      CPU: 4
+      memory: 8Gi
+
+  worker_nodes:
+    - required_resources:
+        CPU: 40
+        memory: 300Gi
+        GPU: 4
+      required_labels:
+        ray.io/accelerator-type: L40S
+      min_nodes: 1
+      max_nodes: 1
+
+# When empty, this uses the default Anyscale Cloud in your organization.
+cloud:
+
+env_vars:
+  DATA_DIR: "/mnt/cluster_storage/data/geometry_3k"
+  # Required by run_geometry3k.sh to opt into the new inference path.
+  _SKYRL_USE_NEW_INFERENCE: "1"
+  # SkyRL has some aggressive timeouts, so we need to increase them.
+  SKYRL_RAY_PG_TIMEOUT_IN_S: "600"
+  # When using uv, Ray workers take a while to start up.
+  RAY_worker_register_timeout_seconds: "600"
+
+# Generate the Geometry-3K dataset, then run multi-turn GRPO training on
+# Qwen3-VL-2B-Instruct. Swap to Qwen/Qwen3-VL-8B-Instruct for the larger model
+# (needs more GPUs/memory — see the compute_config comment above).
+entrypoint: |
+  cd $HOME/SkyRL && \
+  uv run --isolated examples/train/geometry3k/geometry_3k_dataset.py --output_dir $DATA_DIR && \
+  UV_OVERRIDE=examples/train/geometry3k/overrides.txt \
+  uv run --isolated --extra fsdp \
+    python examples/train/geometry3k/geometry3k_entrypoint.py \
+    data.train_data="['$DATA_DIR/train.parquet']" \
+    data.val_data="['$DATA_DIR/val.parquet']" \
+    trainer.algorithm.advantage_estimator="grpo" \
+    trainer.policy.model.path="Qwen/Qwen3-VL-2B-Instruct" \
+    trainer.placement.colocate_all=true \
+    trainer.strategy=fsdp2 \
+    trainer.placement.policy_num_gpus_per_node=4 \
+    trainer.placement.critic_num_gpus_per_node=4 \
+    trainer.placement.ref_num_gpus_per_node=4 \
+    generator.inference_engine.num_engines=4 \
+    generator.inference_engine.tensor_parallel_size=1 \
+    trainer.epochs=6 \
+    trainer.eval_batch_size=256 \
+    trainer.eval_before_train=true \
+    trainer.eval_interval=5 \
+    trainer.update_epochs_per_batch=1 \
+    trainer.train_batch_size=256 \
+    trainer.policy_mini_batch_size=64 \
+    trainer.micro_forward_batch_size_per_gpu=4 \
+    trainer.micro_train_batch_size_per_gpu=4 \
+    trainer.ckpt_interval=5 \
+    trainer.use_sample_packing=false \
+    trainer.max_prompt_length=1024 \
+    generator.sampling_params.max_generate_length=2048 \
+    generator.max_turns=3 \
+    trainer.policy.optimizer_config.lr=1.0e-6 \
+    trainer.algorithm.use_kl_loss=false \
+    generator.inference_engine.backend=vllm \
+    generator.inference_engine.run_engines_locally=true \
+    generator.inference_engine.weight_sync_backend=nccl \
+    generator.inference_engine.async_engine=true \
+    generator.batched=false \
+    generator.is_vlm=true \
+    environment.env_class=geometry3k \
+    generator.n_samples_per_prompt=8 \
+    generator.inference_engine.gpu_memory_utilization=0.8 \
+    trainer.logger="console" \
+    trainer.project_name="geometry3k" \
+    trainer.run_name="geometry3k_vlm" \
+    trainer.resume_mode=null \
+    trainer.log_path="/tmp/skyrl-logs" \
+    trainer.export_path="$ANYSCALE_ARTIFACT_STORAGE/skyrl_vlm_exports" \
+    trainer.dump_eval_results=true \
+    trainer.ckpt_path="$ANYSCALE_ARTIFACT_STORAGE/skyrl_vlm_checkpoints"
+
+# If there is an error, do not retry.
+max_retries: 0
