@@ -1,0 +1,40 @@
+# Anyscale Job: RDT Weight Sync Correctness Test
+#
+# Transfers model weights from a HuggingFace "trainer" actor to an SGLang
+# SchedulerActor via Ray Direct Transport (NCCL), then verifies every
+# parameter matches.
+#
+# Configuration: 2 GPUs on a single node (1 producer + 1 scheduler)
+# Submit: anyscale job submit -f ray_rdt/job_test_rdt_weight_sync.yaml
+
+name: sglang-test-rdt-weight-sync
+
+cloud:
+
+compute_config:
+  head_node:
+    instance_type: g5.12xlarge       # 4x A10G (need at least 2 GPUs)
+
+containerfile: Dockerfile
+
+working_dir: .
+
+entrypoint: >
+  set -e &&
+  echo "==========================================" &&
+  echo "RDT Weight Sync Correctness Test Setup" &&
+  echo "==========================================" &&
+  pip install --no-cache-dir -q "numpy>=1.26.0,<2.0" &&
+  pip install --no-cache-dir -q sgl-kernel --force-reinstall &&
+  echo "Running RDT weight sync test..." &&
+  echo "==========================================" &&
+  python test_rdt_weight_sync.py --model-path Qwen/Qwen3-0.6B
+
+env_vars:
+  NCCL_DEBUG: INFO
+  NCCL_IB_DISABLE: "0"
+  NCCL_NET_GDR_LEVEL: "2"
+  RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES: "1"
+  SGLANG_SKIP_SGL_KERNEL_VERSION_CHECK: "1"
+
+max_retries: 0
