@@ -1,0 +1,32 @@
+name: miles-qwen3-8b-grpo-h100
+
+containerfile: ./Dockerfile
+
+compute_config:
+  head_node:
+    required_resources:
+      CPU: 8
+      memory: 32Gi
+  worker_nodes:
+    - required_resources:
+        CPU: 192
+        memory: 2048Gi
+        GPU: 8
+      required_labels:
+        ray.io/accelerator-type: H100
+      min_nodes: 2
+      max_nodes: 2
+
+working_dir: .
+
+entrypoint: bash entrypoint.sh
+
+env_vars:
+  # Standard setting for Megatron-LM with tensor parallelism on H100 GPUs.
+  # Limits concurrent CUDA kernel launches to prevent deadlocks with NCCL
+  # collective operations during distributed training.
+  CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  TENSORBOARD_DIR: "/mnt/cluster_storage/tensorboard_logs"
+
+max_retries: 0
+timeout_s: 7200
