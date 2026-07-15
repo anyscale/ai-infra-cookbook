@@ -35,7 +35,7 @@ The job runs 2 training epochs on the `xvla-soft-fold` dataset across 8× L40S G
 
 ## Interactive notebook
 
-For a step-by-step walkthrough, open **[vla.ipynb](vla.ipynb)** in an Anyscale workspace and run cells top-to-bottom.
+For a step-by-step walkthrough, open **[vla.ipynb](https://github.com/anyscale/examples/blob/main/vla_fine_tuning/vla.ipynb)** in an Anyscale workspace and run cells top-to-bottom.
 
 ## Understanding the example
 
@@ -58,9 +58,9 @@ Ray separates the two distinct compute workloads in VLA training:
                      +--------------------+---------------------
 ```
 
-- **[lerobot_datasource.py](lerobot_datasource.py)** is a custom Ray Data datasource that streams LeRobot v3 datasets (parquet metadata + AV1-encoded mp4 video) directly from S3, decoding video frames on CPU workers.
-- **[vla.py](vla.py)** builds the Ray Data preprocessing pipeline (camera renaming, HWC→CHW transposition, /255 normalisation) and launches distributed training with `TorchTrainer`.
-- **[util.py](util.py)** contains model loading, checkpointing, collation, and training step helpers. PI0.5 is loaded in BF16 with only the four action/time projection heads unfrozen — the 3B-parameter PaliGemma backbone stays frozen, dramatically reducing memory and compute.
+- **[lerobot_datasource.py](https://github.com/anyscale/examples/blob/main/vla_fine_tuning/lerobot_datasource.py)** is a custom Ray Data datasource that streams LeRobot v3 datasets (parquet metadata + AV1-encoded mp4 video) directly from S3, decoding video frames on CPU workers.
+- **[vla.py](https://github.com/anyscale/examples/blob/main/vla_fine_tuning/vla.py)** builds the Ray Data preprocessing pipeline (camera renaming, HWC→CHW transposition, /255 normalisation) and launches distributed training with `TorchTrainer`.
+- **[util.py](https://github.com/anyscale/examples/blob/main/vla_fine_tuning/util.py)** contains model loading, checkpointing, collation, and training step helpers. PI0.5 is loaded in BF16 with only the four action/time projection heads unfrozen — the 3B-parameter PaliGemma backbone stays frozen, dramatically reducing memory and compute.
 - The LR schedule uses linear warmup (10%) followed by cosine decay, computed from the actual number of training rows so the schedule is correct whether you use a row limit (`LIMIT_ROWS`) or train on the full dataset.
 - Fault tolerance is built in: if a worker dies, Ray restarts from the last checkpoint automatically.
 - PI0.5 requires approximately 28 GB of VRAM. The default configuration targets **L40S** GPUs (48 GB).

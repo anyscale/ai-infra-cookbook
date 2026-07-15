@@ -37,7 +37,7 @@ The `anyscale service deploy` command outputs a line that looks like
 curl -H "Authorization: Bearer <SERVICE_TOKEN>" <BASE_URL>
 ```
 
-From the output, you can extract the service token and base URL. Open [query.py](https://github.com/anyscale/examples/blob/main/03_deploy_llama_3_8b/query.py) and add them to the appropriate fields.
+From the output, you can extract the service token and base URL. Open [query.py](https://github.com/anyscale/examples/blob/main/serve_tensor_parallel/query.py) and add them to the appropriate fields.
 ```python
 token = <SERVICE_TOKEN> 
 base_url = <BASE_URL> 

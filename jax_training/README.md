@@ -11,8 +11,6 @@ anyscale login
 
 ## Submit the job
 
-Clone this repository
-
 Clone the example from GitHub.
 
 ```bash
