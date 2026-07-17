@@ -1,0 +1,52 @@
+name: video-captioning-mirror-to-ai-storage
+
+containerfile: ./Dockerfile
+
+# CoreWeave US-EAST-14A via Anyscale. This is a CPU/network transfer job; it
+# streams each file from Hugging Face directly into CoreWeave AI Object Storage.
+compute_config:
+  cloud: rkn-gpu-cloud
+  cloud_resource: coreweave-use14a
+
+  advanced_instance_config:
+    metadata:
+      labels:
+        kueue.x-k8s.io/queue-name: default-queue
+
+  head_node:
+    required_resources:
+      CPU: 32
+      memory: 128Gi
+
+  worker_nodes:
+    - required_resources:
+        CPU: 120
+        memory: 480Gi
+      labels:
+        cpu_only: "true"
+      advanced_instance_config:
+        metadata:
+          labels:
+            kueue.x-k8s.io/queue-name: default-queue
+      min_nodes: 1
+      max_nodes: 8
+
+working_dir: .
+
+env_vars:
+  # CoreWeave's in-cluster LOTA data path. AI Object Storage requires virtual-
+  # hosted addressing; both PyArrow and Run:ai are configured for it.
+  AWS_ENDPOINT_URL: http://cwlota.com
+  AWS_ENDPOINT_URL_S3: http://cwlota.com
+  AWS_REGION: US-EAST-14A
+  AWS_DEFAULT_REGION: US-EAST-14A
+  RUNAI_STREAMER_S3_USE_VIRTUAL_ADDRESSING: "1"
+  # One resolver GET and one multipart upload per task. Keep this below the Hub
+  # resolver quota and CoreWeave UploadPart saturation point.
+  MIRROR_CONCURRENCY: "16"
+  S3_MAX_ATTEMPTS: "8"
+
+entrypoint: python mirror_to_ai_storage.py
+
+max_retries: 1
+timeout_s: 604800

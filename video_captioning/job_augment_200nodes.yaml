@@ -1,0 +1,81 @@
+name: video-augment-0-6pb-200nodes
+
+containerfile: ./Dockerfile
+
+# Wide-fleet variant of job_augment_1000x.yaml for 200 × turin-gp CPU nodes
+# (AMD Turin 9655P, 192 vCPU / 1536 GB each — 38,400 vCPUs at full width).
+# At this width the 0.6 PB job is minutes of compute, and the run doubles as
+# an aggregate-write-scaling measurement: every node PUTs its own outputs, so
+# fleet write demand is ~200 × the per-node ceiling and AUGMENT_PROGRESS logs
+# where CAIOS actually saturates.
+compute_config:
+  cloud: rkn-gpu-cloud
+  cloud_resource: coreweave-use14a
+
+  advanced_instance_config:
+    metadata:
+      labels:
+        kueue.x-k8s.io/queue-name: default-queue
+
+  # Head on the same turin-gp shape as the workers: the driver tracks ~430k
+  # blocks and aggregates a 70M-row manifest, and the fleet-join storm killed
+  # two 64-CPU/256Gi heads. The pool holds 200 nodes: 1 head + 199 workers.
+  head_node:
+    required_resources:
+      CPU: 180
+      memory: 1400Gi
+
+  worker_nodes:
+    # turin-gp: request slightly under the node's 192 vCPU / 1536 GB so the
+    # pod fits beside system reservations.
+    - required_resources:
+        CPU: 180
+        memory: 1400Gi
+      labels:
+        cpu_only: "true"
+      advanced_instance_config:
+        metadata:
+          labels:
+            kueue.x-k8s.io/queue-name: default-queue
+      # Demand-driven with a standing request from the driver. (min == max
+      # forced assembly was tried and failed cluster startup outright —
+      # the platform could not assemble the full fleet at once; elastic start
+      # + standing demand makes progress with whatever is deliverable.)
+      min_nodes: 1
+      max_nodes: 199
+
+working_dir: .
+
+env_vars:
+  AWS_ENDPOINT_URL: http://cwlota.com
+  AWS_ENDPOINT_URL_S3: http://cwlota.com
+  AWS_REGION: US-EAST-14A
+  AWS_DEFAULT_REGION: US-EAST-14A
+  S3_MAX_ATTEMPTS: "8"
+  AUGMENT_FACTOR: "1600"
+  REENCODE_FRACTION: "0.005"
+  OUTPUT_BUDGET_TIB: "700"
+  # Wide-fleet tuning: fatter remux chunks keep total task count (~400k) well
+  # matched to ~36k concurrent slots, and one uploader thread per task puts a
+  # 180-task node at ~90-150 in-flight PUTs — the measured optimal band.
+  # Uncapped concurrency: the fleet itself is the budget here.
+  REMUX_VARIANTS_PER_TASK: "200"
+  # 1 uploader thread/task at this node shape: 180 tasks × 1 PUT stream +
+  # ~180 GET streams ≈ 360 connections/node, at CoreWeave's guidance. Two
+  # threads pushed the combined stream count toward the ~800/node cliff that
+  # wedges the LOTA node agent.
+  UPLOAD_THREADS_PER_TASK: "1"
+  TRANSCODE_CONCURRENCY: "0"
+  # Demand the whole worker fleet at driver start as 199 node-shaped bundles
+  # (199 × 180 CPU). Node-shaped bundles are what the Anyscale autoscaler
+  # acts on; without this Ray Data's backpressured submission never surfaces
+  # pending demand and the fleet stalls at a handful of nodes.
+  PREPROVISION_CPUS: "35820"
+  PREPROVISION_BUNDLE_CPUS: "180"
+
+# Resume a prior partial run by passing its prefix:
+#   --env OUTPUT=s3://.../outputs/augment/<timestamp>
+entrypoint: python augment_ray_data.py ${NUM_VIDEOS:+--num-videos ${NUM_VIDEOS}} ${INPUT:+--input ${INPUT}} ${OUTPUT:+--output ${OUTPUT}}
+
+max_retries: 1
+timeout_s: 86400

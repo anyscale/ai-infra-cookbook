@@ -1,9 +1,11 @@
-name: video-captioning-ray-core-256gpu
+name: video-captioning-ray-data-xl
 
 containerfile: ./Dockerfile
 
-# Same cluster shape as job_ray_data.yaml — the Ray Core baseline runs on
-# identical hardware so the two reports compare apples to apples.
+# XL fleet: up to 200 GPU nodes (1,600 RTX PRO 6000). Intended for the
+# continuous-workload regime, e.g. PASS_SHARDS=129 DATASET_REPEATS=1000
+# (~100M captions, ~2.5 h). The head node is upsized because ~100M rows of
+# streaming-block metadata live driver-side.
 compute_config:
   cloud: rkn-gpu-cloud
   cloud_resource: coreweave-use14a
@@ -13,18 +15,15 @@ compute_config:
       labels:
         kueue.x-k8s.io/queue-name: default-queue
 
-  # Head node is control-plane only (no GPU) — GPUs live in the worker pool.
+  # Head sized near the CPU-node shape's ceiling: the driver + GCS carry all
+  # streaming-block metadata, and the 100M-caption run killed a 64-CPU/256Gi
+  # head before read-task grouping cut the metadata load.
   head_node:
     required_resources:
-      CPU: 32
-      memory: 128Gi
+      CPU: 96
+      memory: 384Gi
 
   worker_nodes:
-    # ── GPU pool: one Qwen3-VL-8B engine per RTX PRO 6000 (8 GPUs/node) ────
-    # Autoscale from one node to the fleet requested by EXPECTED_GPUS:
-    #    8 GPUs (smoke) -> 1 node,   EXPECTED_GPUS=8
-    #   64 GPUs         -> 8 nodes,  EXPECTED_GPUS=64
-    #  256 GPUs         -> 32 nodes, EXPECTED_GPUS=256
     - required_resources:
         CPU: 120
         memory: 960Gi
@@ -36,9 +35,8 @@ compute_config:
           labels:
             kueue.x-k8s.io/queue-name: default-queue
       min_nodes: 1
-      max_nodes: 32
+      max_nodes: 200
 
-    # ── CPU-only pool: shard reads + decode tasks ──────────────────────────
     - required_resources:
         CPU: 120
         memory: 480Gi
@@ -59,11 +57,12 @@ env_vars:
   AWS_REGION: US-EAST-14A
   AWS_DEFAULT_REGION: US-EAST-14A
   RUNAI_STREAMER_S3_USE_VIRTUAL_ADDRESSING: "1"
-  EXPECTED_GPUS: "256"
-  # 12 s caption windows over FineVideo's ~12.4M video-seconds ≈ 1M captions.
+  EXPECTED_GPUS: "1600"
   CAPTION_WINDOW_SEC: "12"
+  PREPROVISION_GPUS: "0"
+  POOL_FLOOR: "32"
 
-entrypoint: python caption_ray_core.py ${NUM_VIDEOS:+--num-videos ${NUM_VIDEOS}} ${INPUT:+--input ${INPUT}} ${OUTPUT:+--output ${OUTPUT}}
+entrypoint: python caption_ray_data.py ${NUM_VIDEOS:+--num-videos ${NUM_VIDEOS}} ${INPUT:+--input ${INPUT}} ${OUTPUT:+--output ${OUTPUT}}
 
-max_retries: 2
+max_retries: 1
 timeout_s: 86400

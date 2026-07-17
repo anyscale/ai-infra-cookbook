@@ -12,13 +12,18 @@ RUN sudo apt-get update && sudo apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     && sudo rm -rf /var/lib/apt/lists/*
 
-# qwen-vl-utils supports Qwen3-VL offline inference; decord decodes the clips;
+# Keep the vLLM, PyTorch, and FlashInfer versions supplied by the Ray-LLM base
+# image as one tested binary set. Install only the optional Run:ai streamer
+# dependency needed for S3 model loading; reinstalling `vllm[runai]` lets pip
+# downgrade vLLM/PyTorch without downgrading FlashInfer cubins.
+# qwen-vl-utils supports Qwen3-VL offline inference; decord decodes clips;
 # pynvml/psutil power the utilization sampler.
 RUN pip install --no-cache-dir \
+    "runai-model-streamer[s3]>=0.15.7" \
     "qwen-vl-utils==0.0.14" \
     opencv-python-headless \
     decord \
     huggingface_hub \
-    pynvml \
+    nvidia-ml-py \
     psutil \
     "numpy<2.0.0"

@@ -1,0 +1,67 @@
+name: video-augment-1000x
+
+containerfile: ./Dockerfile
+
+# CPU-only transcode fleet. The remux tier is IO-bound and the re-encode tier
+# is x264-bound; neither touches a GPU. 20×120 = 2,400 cores at the ceiling —
+# pending flat_map tasks drive the autoscaler, so small runs stay small.
+compute_config:
+  cloud: rkn-gpu-cloud
+  cloud_resource: coreweave-use14a
+
+  advanced_instance_config:
+    metadata:
+      labels:
+        kueue.x-k8s.io/queue-name: default-queue
+
+  # The driver aggregates the manifest (2 GB+ of pandas at full scale) on the
+  # head node, hence the larger control-plane footprint than the bench jobs.
+  head_node:
+    required_resources:
+      CPU: 32
+      memory: 128Gi
+
+  worker_nodes:
+    - required_resources:
+        CPU: 120
+        memory: 480Gi
+      labels:
+        cpu_only: "true"
+      advanced_instance_config:
+        metadata:
+          labels:
+            kueue.x-k8s.io/queue-name: default-queue
+      min_nodes: 1
+      max_nodes: 20
+
+working_dir: .
+
+env_vars:
+  AWS_ENDPOINT_URL: http://cwlota.com
+  AWS_ENDPOINT_URL_S3: http://cwlota.com
+  AWS_REGION: US-EAST-14A
+  AWS_DEFAULT_REGION: US-EAST-14A
+  S3_MAX_ATTEMPTS: "8"
+  # 1000 variants/clip at ~0.85× bytes each ≈ 850× the corpus ≈ 0.6 PB from
+  # the full 630 GiB mirror. CAIOS's default quota is 20 TiB per AZ per
+  # account — the driver's pre-flight estimate fails fast if the projected
+  # output exceeds OUTPUT_BUDGET_TIB, but the quota itself must be raised via
+  # CoreWeave support before a full-corpus run.
+  AUGMENT_FACTOR: "1000"
+  # 2% of variants get the full libx264 filter-chain re-encode (pixel-level
+  # diversity); the rest are keyframe-aligned -c copy temporal crops/retimes.
+  # This fraction is the wall-clock knob: re-encode CPU dominates end-to-end
+  # time long before the write path does.
+  REENCODE_FRACTION: "0.02"
+  OUTPUT_BUDGET_TIB: "700"
+
+# NUM_VIDEOS limits source clips for smoke/measurement runs; omit for the
+# full corpus. Example smoke run (~16 GiB of output):
+#   anyscale job submit -f job_augment_1000x.yaml \
+#     --env NUM_VIDEOS=32 --env AUGMENT_FACTOR=40 --env REENCODE_FRACTION=0.1
+entrypoint: python augment_ray_data.py ${NUM_VIDEOS:+--num-videos ${NUM_VIDEOS}} ${INPUT:+--input ${INPUT}} ${OUTPUT:+--output ${OUTPUT}}
+
+max_retries: 1
+# Full-corpus runs on a capped-CPU fleet are day-scale: 0.6 PB at the 2-node
+# write ceiling is ~18 h of pure PUT time before transcode contention.
+timeout_s: 259200

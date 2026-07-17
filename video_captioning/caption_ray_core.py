@@ -24,16 +24,15 @@ import os
 import sys
 import time
 from collections import deque
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import ray
-from huggingface_hub import HfFileSystem
 
 from utils import (
     MAX_MODEL_LEN,
-    MODEL_SOURCE,
+    MODEL_LOAD_FORMAT,
     NUM_KEYFRAMES,
     OUTPUT_COLUMNS,
     VLM_BATCH_SIZE,
@@ -41,8 +40,12 @@ from utils import (
     build_messages_b64,
     clean_caption,
     decode_and_sample,
+    dataset_source,
     default_output,
     filesystem_and_path,
+    model_source,
+    require_mirror_complete,
+    require_s3_uri,
     sampling_params,
     wait_for_gpus,
     worker_setup,
@@ -61,28 +64,20 @@ logger = logging.getLogger("video_captioning")
 
 
 @ray.remote(num_cpus=1)
-def read_and_decode_shard(
-    path: str, hf_token: Optional[str], is_hf: bool
-) -> List[Dict[str, Any]]:
-    """Read one parquet shard's mp4 column and decode each clip to keyframes.
+def read_and_decode_shard(path: str) -> List[Dict[str, Any]]:
+    """Read one parquet shard's mp4 column and decode each clip to keyframes,
+    one row per caption window.
 
     Read and decode are fused into one task on purpose: the task returns only
     the compact keyframe payloads (a few MB), never the multi-MB mp4 blobs, so
     the driver's scheduling loop never pulls raw video into head-node memory.
     """
-    if is_hf:
-        fs = HfFileSystem(token=hf_token)
-        with fs.open(path, "rb") as f:
-            table = pq.read_table(f, columns=["mp4"])
-    else:
-        fs, rel = filesystem_and_path(path)
-        table = pq.read_table(rel, filesystem=fs, columns=["mp4"])
+    fs, rel = filesystem_and_path(path)
+    table = pq.read_table(rel, filesystem=fs, columns=["mp4"])
 
     decoded = []
     for mp4 in table.column("mp4").to_pylist():
-        payload = decode_and_sample(mp4)
-        if payload is not None:
-            decoded.append(payload)
+        decoded.extend(decode_and_sample(mp4))
     return decoded
 
 
@@ -92,11 +87,14 @@ class CaptionActor:
     Qwen3-VL-8B fits comfortably on a single 96 GB GPU."""
 
     def __init__(self):
+        # Configure the process-private model-streamer cache before importing
+        # vLLM, whose environment settings may be resolved during import.
+        worker_setup()
         from vllm import LLM
 
-        worker_setup()
         self.llm = LLM(
-            model=MODEL_SOURCE,
+            model=model_source(),
+            load_format=MODEL_LOAD_FORMAT,
             max_model_len=MAX_MODEL_LEN,
             limit_mm_per_prompt={"image": NUM_KEYFRAMES},
             gpu_memory_utilization=0.90,
@@ -125,32 +123,24 @@ class CaptionActor:
 # ---------------------------------------------------------------------------
 
 
-def enumerate_shards(input_uri: str, hf_token: Optional[str]) -> tuple:
-    """Return (list_of_shard_paths, is_hf)."""
+def enumerate_shards(input_uri: str) -> List[str]:
+    """Return every Parquet shard under an AI Object Storage prefix."""
     import pyarrow.fs
 
-    if input_uri.startswith("hf://"):
-        fs = HfFileSystem(token=hf_token)
-        paths = fs.glob(f"{input_uri[len('hf://'):]}/**/*.parquet")
-        return sorted(paths), True
     fs, rel = filesystem_and_path(input_uri)
     infos = fs.get_file_info(pyarrow.fs.FileSelector(rel, recursive=True))
-    prefix = input_uri.split("://", 1)[0] + "://" if "://" in input_uri else ""
+    prefix = input_uri.split("://", 1)[0] + "://"
     paths = [prefix + i.path for i in infos if i.path.endswith(".parquet")]
-    return sorted(paths), False
+    return sorted(paths)
 
 
 def write_chunk(rows: List[Dict[str, Any]], output_uri: str, part_idx: int):
     """Write one output parquet part."""
     table = pa.table({c: [r[c] for r in rows] for c in OUTPUT_COLUMNS})
     name = f"part-{part_idx:05d}.parquet"
-    if "://" in output_uri:
-        fs, rel = filesystem_and_path(output_uri)
-        with fs.open_output_stream(f"{rel}/{name}") as f:
-            pq.write_table(table, f)
-    else:
-        os.makedirs(output_uri, exist_ok=True)
-        pq.write_table(table, os.path.join(output_uri, name))
+    fs, rel = filesystem_and_path(output_uri)
+    with fs.open_output_stream(f"{rel}/{name}") as f:
+        pq.write_table(table, f)
 
 
 # ---------------------------------------------------------------------------
@@ -160,19 +150,17 @@ def write_chunk(rows: List[Dict[str, Any]], output_uri: str, part_idx: int):
 
 def main():
     parser = argparse.ArgumentParser(description="Video captioning on raw Ray Core.")
-    parser.add_argument("--input", default="hf://datasets/HuggingFaceFV/finevideo")
+    parser.add_argument("--input", default=None)
     parser.add_argument("--output", default=None)
     parser.add_argument("--num-videos", type=int, default=None)
     parser.add_argument("--write-chunk-rows", type=int, default=2000)
     args = parser.parse_args()
-    output = args.output or default_output("ray_core")
+    input_uri = require_s3_uri(args.input or dataset_source(), "--input")
+    output = require_s3_uri(args.output or default_output("ray_core"), "--output")
+    model = model_source()
+    require_mirror_complete(input_uri, "FineVideo")
+    require_mirror_complete(model, "Qwen3-VL")
 
-    hf_token = os.environ.get("HF_TOKEN")
-    if args.input.startswith("hf://") and not hf_token:
-        logger.error("HF_TOKEN is required to read %s", args.input)
-        sys.exit(1)
-
-    ray.init(ignore_reinit_error=True)
     num_gpus = wait_for_gpus(min_gpus=int(os.environ.get("EXPECTED_GPUS", "8")))
     if num_gpus < 1:
         logger.error("No GPUs joined the cluster within the timeout.")
@@ -181,21 +169,31 @@ def main():
     # Manual backpressure caps — the knobs Ray Data sets automatically.
     max_shard_tasks = max(8, int(ray.cluster_resources().get("CPU", 0)))
     max_caption_tasks = num_gpus * 2  # two batches in flight per GPU hides dispatch latency
+    # Every decoded row funnels through decoded_q on the head node, and
+    # windowed decode fans each shard out ~25x — decode outruns the GPUs, so
+    # an uncapped queue OOMs the head on a 1M-caption run. Gate new shard
+    # launches on rows already queued plus a running estimate of what the
+    # in-flight shards will add. (Ray Data derives this from object sizes.)
+    max_buffered_rows = int(os.environ.get("MAX_BUFFERED_ROWS", "150000"))
+    rows_per_shard_est = 1000.0  # deliberately high until real shards report in
+    shards_done = 0
 
-    shard_paths, is_hf = enumerate_shards(args.input, hf_token)
+    shard_paths = enumerate_shards(input_uri)
     limit = args.num_videos
     logger.info("input=%s (%d shards)  model=%s  GPUs=%d  output=%s",
-                args.input, len(shard_paths), MODEL_SOURCE, num_gpus, output)
+                input_uri, len(shard_paths), model, num_gpus, output)
 
-    # Spin up one caption actor per GPU and block on weight load so the timed
-    # region measures steady-state throughput, not cold start.
+    # The hand-rolled pipeline must pre-provision its fleet: one engine per
+    # GPU, all weights loaded, before the first caption. That fixed cost — and
+    # the num_gpus GPUs it holds while paying it — belongs inside the timed
+    # region; the Ray Data rebuild autoscales its pool instead of paying it.
+    monitor = UtilizationMonitor().start()
+    t0 = time.time()
+
     actors = [CaptionActor.remote() for _ in range(num_gpus)]
     logger.info("Loading %d vLLM engines (one per GPU)...", num_gpus)
     ray.get([a.ready.remote() for a in actors])
     logger.info("Engines ready.")
-
-    monitor = UtilizationMonitor().start()
-    t0 = time.time()
 
     shard_q = deque(shard_paths)
     decoded_q: deque = deque()
@@ -214,9 +212,17 @@ def main():
         return limit is not None and videos_enqueued >= limit
 
     while shard_q or decoded_q or inflight:
-        # 1. Keep read+decode tasks flowing (unless we've hit --num-videos).
-        while shard_q and n("shard") < max_shard_tasks and not limit_reached():
-            ref = read_and_decode_shard.remote(shard_q.popleft(), hf_token, is_hf)
+        # 1. Keep read+decode tasks flowing (unless we've hit --num-videos or
+        #    the head-side row buffer is projected to overflow).
+        while (
+            shard_q
+            and n("shard") < max_shard_tasks
+            and not limit_reached()
+            and len(decoded_q) + n("shard") * rows_per_shard_est < max_buffered_rows
+        ):
+            ref = read_and_decode_shard.options(
+                label_selector={"cpu_only": "true"}
+            ).remote(shard_q.popleft())
             inflight[ref] = "shard"
 
         # 2. Dispatch full VLM batches round-robin across the actor pool.
@@ -241,6 +247,8 @@ def main():
         kind = inflight.pop(ref)
         out = ray.get(ref)
         if kind == "shard":
+            shards_done += 1
+            rows_per_shard_est += (len(out) - rows_per_shard_est) / shards_done
             take = out if limit is None else out[: max(0, limit - videos_enqueued)]
             decoded_q.extend(take)
             videos_enqueued += len(take)
@@ -264,6 +272,7 @@ def main():
 
     write_report(
         pipeline="ray_core",
+        input_uri=input_uri,
         num_gpus=num_gpus,
         num_captions=captions_done,
         video_seconds=total_video_seconds,
