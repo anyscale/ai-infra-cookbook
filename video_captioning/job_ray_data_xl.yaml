@@ -1,0 +1,68 @@
+name: video-captioning-ray-data-xl
+
+containerfile: ./Dockerfile
+
+# XL fleet: up to 200 GPU nodes (1,600 RTX PRO 6000). Intended for the
+# continuous-workload regime, e.g. PASS_SHARDS=129 DATASET_REPEATS=1000
+# (~100M captions, ~2.5 h). The head node is upsized because ~100M rows of
+# streaming-block metadata live driver-side.
+compute_config:
+  cloud: rkn-gpu-cloud
+  cloud_resource: coreweave-use14a
+
+  advanced_instance_config:
+    metadata:
+      labels:
+        kueue.x-k8s.io/queue-name: default-queue
+
+  # Head sized near the CPU-node shape's ceiling: the driver + GCS carry all
+  # streaming-block metadata, and the 100M-caption run killed a 64-CPU/256Gi
+  # head before read-task grouping cut the metadata load.
+  head_node:
+    required_resources:
+      CPU: 96
+      memory: 384Gi
+
+  worker_nodes:
+    - required_resources:
+        CPU: 120
+        memory: 960Gi
+        GPU: 8
+      required_labels:
+        ray.io/accelerator-type: RTX-PRO-6000
+      advanced_instance_config:
+        metadata:
+          labels:
+            kueue.x-k8s.io/queue-name: default-queue
+      min_nodes: 1
+      max_nodes: 200
+
+    - required_resources:
+        CPU: 120
+        memory: 480Gi
+      labels:
+        cpu_only: "true"
+      advanced_instance_config:
+        metadata:
+          labels:
+            kueue.x-k8s.io/queue-name: default-queue
+      min_nodes: 1
+      max_nodes: 8
+
+working_dir: .
+
+env_vars:
+  AWS_ENDPOINT_URL: http://cwlota.com
+  AWS_ENDPOINT_URL_S3: http://cwlota.com
+  AWS_REGION: US-EAST-14A
+  AWS_DEFAULT_REGION: US-EAST-14A
+  RUNAI_STREAMER_S3_USE_VIRTUAL_ADDRESSING: "1"
+  EXPECTED_GPUS: "1600"
+  CAPTION_WINDOW_SEC: "12"
+  PREPROVISION_GPUS: "0"
+  POOL_FLOOR: "32"
+
+entrypoint: python caption_ray_data.py ${NUM_VIDEOS:+--num-videos ${NUM_VIDEOS}} ${INPUT:+--input ${INPUT}} ${OUTPUT:+--output ${OUTPUT}}
+
+max_retries: 1
+timeout_s: 86400

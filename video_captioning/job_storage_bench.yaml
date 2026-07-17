@@ -1,0 +1,61 @@
+name: video-captioning-caios-bench
+
+containerfile: ./Dockerfile
+
+# Small fixed fleet: 4 GPU nodes + 4 CPU nodes, one bench actor per node.
+# min == max so per-node numbers come from a stable, known cluster shape.
+compute_config:
+  cloud: rkn-gpu-cloud
+  cloud_resource: coreweave-use14a
+
+  advanced_instance_config:
+    metadata:
+      labels:
+        kueue.x-k8s.io/queue-name: default-queue
+
+  head_node:
+    required_resources:
+      CPU: 16
+      memory: 64Gi
+
+  worker_nodes:
+    - required_resources:
+        CPU: 120
+        memory: 960Gi
+        GPU: 8
+      required_labels:
+        ray.io/accelerator-type: RTX-PRO-6000
+      advanced_instance_config:
+        metadata:
+          labels:
+            kueue.x-k8s.io/queue-name: default-queue
+      min_nodes: 4
+      max_nodes: 4
+
+    - required_resources:
+        CPU: 120
+        memory: 480Gi
+      labels:
+        cpu_only: "true"
+      advanced_instance_config:
+        metadata:
+          labels:
+            kueue.x-k8s.io/queue-name: default-queue
+      min_nodes: 4
+      max_nodes: 4
+
+working_dir: .
+
+env_vars:
+  AWS_REGION: US-EAST-14A
+  AWS_DEFAULT_REGION: US-EAST-14A
+  BENCH_GPU_NODES: "4"
+  BENCH_CPU_NODES: "4"
+  BENCH_PASS_SECONDS: "45"
+  BENCH_READ: "1"
+  BENCH_WRITE: "1"
+
+entrypoint: python storage_bench.py
+
+max_retries: 1
+timeout_s: 7200
