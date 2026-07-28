@@ -1,0 +1,72 @@
+# NeMo Curator Image Semantic Deduplication Job
+# View the docs: https://docs.anyscale.com/reference/job-api#jobconfig
+
+name: nemo-curator-image-dedup
+
+# Build custom image with NeMo Curator CUDA dependencies
+containerfile: ./Dockerfile
+
+# Compute configuration with L4 GPU for CUDA-accelerated image processing
+# Head + worker nodes for distributed processing
+compute_config:
+  head_node:
+    instance_type: g6.8xlarge  # 1x L4 GPU, 32 vCPUs, 128GB RAM
+    # Ensure Ray reports CPU resources on the head node for cosmos_xenna
+    resources:
+      CPU: 32
+  worker_nodes:
+    - instance_type: g6.8xlarge  # 1x L4 GPU per worker
+      min_nodes: 2
+      max_nodes: 2
+
+# Working directory - upload only the example code, not data
+working_dir: .
+
+# Environment variables for job configuration
+# Override these when submitting to use your own data paths
+env_vars:
+  # Input parquet file with image URLs (TEXT and URL columns)
+  # This file is copied into the Docker image during build
+  INPUT_PARQUET: "/home/ray/data/truncated_100k_mscoco.parquet"
+  
+  # Directory for WebDataset tar files (created from parquet)
+  # Use /mnt/cluster_storage for persistence, or /home/ray/data for ephemeral
+  INPUT_WDS_DIR: "/mnt/cluster_storage/nemo_curator/webdataset"
+  
+  # Output directory for deduplicated images
+  OUTPUT_DIR: "/mnt/cluster_storage/nemo_curator/results"
+  
+  # Directory to store CLIP embeddings
+  EMBEDDINGS_DIR: "/mnt/cluster_storage/nemo_curator/embeddings"
+  
+  # Directory for duplicate removal parquets
+  REMOVAL_DIR: "/mnt/cluster_storage/nemo_curator/removal_ids"
+  
+  # Model weights directory (pre-downloaded in Docker image)
+  MODEL_DIR: "/home/ray/model_weights"
+  
+  # Processing settings
+  BATCH_SIZE: "32"
+  EMBEDDING_BATCH_SIZE: "32"
+  TAR_FILES_PER_PARTITION: "10"
+  DOWNLOAD_PROCESSES: "8"
+  ENTRIES_PER_TAR: "1000"
+  
+
+  SKIP_DOWNLOAD: "false" # Always keep false
+  
+  # Ray memory settings to avoid OOM
+  RAY_DEFAULT_OBJECT_STORE_MEMORY_PROPORTION: "0.5"
+  
+  # Increase Ray API server limit for cosmos_xenna monitoring
+  RAY_MAX_LIMIT_FROM_API_SERVER: "100000"
+
+# The entrypoint script
+entrypoint: python image_dedup_example.py
+
+# Don't retry on failure - easier to debug
+max_retries: 0
+
+# Kill after 4 hours to control costs (adjust based on dataset size)
+timeout_s: 14400
+
