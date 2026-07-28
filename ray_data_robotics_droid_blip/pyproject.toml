@@ -1,0 +1,46 @@
+[project]
+name = "ray-droid-blip-demo"
+version = "0.1.0"
+description = "Ray Data pipeline: DROID robotics dataset → BLIP image captioning"
+readme = "README.md"
+requires-python = ">=3.13, <3.14"
+dependencies = [
+    # Ray — data processing + cluster management
+    "ray[data,default]",
+    # Vision-language model and tokenizer
+    "transformers>=4.40,<5.0",
+    # PyTorch — GPU inference; install CUDA-enabled wheel separately on workers
+    "torch",
+    "torchvision",
+    # Video decoding (pure C, no ffmpeg subprocess)
+    "av",
+    # S3 access — streaming download without touching disk
+    "boto3",
+    "smart-open[s3]",
+    # Data formats
+    "pyarrow",
+    "h5py",
+    # Image encoding / resize
+    "pillow>=11.1.0",
+    "numpy",
+    # Anyscale — cluster and job management
+    "anyscale>=0.26.91",
+]
+
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[[tool.uv.index]]
+name = "anyscale"
+url = "http://localhost:9478/simple"
+
+[tool.uv]
+index-url = "https://pypi.org/simple"
+environments = ["sys_platform == 'linux'"]
+
+[tool.uv.sources]
