@@ -39,6 +39,7 @@ dependencies = [
 
 [tool.uv]
 environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+link-mode = "copy"
 
 [[tool.uv.index]]
 name = "anyscale"

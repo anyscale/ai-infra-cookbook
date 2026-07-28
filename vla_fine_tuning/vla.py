@@ -106,8 +106,6 @@ import ray
 
 ray.init(
     runtime_env={
-        "py_executable": "uv run",
-        "working_dir": ".",
         "env_vars": {"HF_TOKEN": HF_TOKEN},
     },
     ignore_reinit_error=True,
@@ -243,15 +241,12 @@ def train_loop_per_worker(config: dict):
         policy.module.config, pretrained_path="lerobot/pi05_base", dataset_stats=config["stats"],
     )
 
-    # -- Hyperparameters and LR schedule ----------------------------------------
+    # -- Hyperparameters -------------------------------------------------------
 
     batch_size  = int(config.get("batch_size", 1))
     grad_accum  = int(config.get("grad_accum", 1))
     num_epochs  = int(config.get("num_epochs", 1))
     max_len     = int(config.get("max_len", 512))
-
-    num_workers = ray.train.get_context().get_world_size()                 # <-- RAY: how many GPU workers?
-    scheduler = util.build_lr_scheduler(optimizer, config, num_workers, last_step=step)
 
     # =========================================================================
     # Training loop
@@ -291,7 +286,8 @@ def train_loop_per_worker(config: dict):
         # See: https://docs.ray.io/en/latest/data/api/doc/ray.data.DataIterator.iter_torch_batches.html
         for batch in shard.iter_torch_batches(                             # <-- RAY DATA: streaming batches
             batch_size=batch_size,
-            collate_fn=util.NumpyToTorchCollate(device),
+            collate_fn=util.make_collate_fn(device),
+            prefetch_batches=2,
         ):
             # Standard PyTorch: forward + backward (see util.py)
             loss_val = util.train_step(policy, batch, preprocessor, max_len, grad_accum)
@@ -302,17 +298,17 @@ def train_loop_per_worker(config: dict):
 
             if accum_count % grad_accum == 0:
                 # Standard PyTorch: clip, step, zero_grad (see util.py)
-                util.optimizer_step(policy, optimizer, scheduler)
+                util.optimizer_step(policy, optimizer)
                 accum_count = 0
 
             # Log every 10 steps so you can watch training progress.
             if step % 10 == 0:
-                log.info("epoch=%d  step=%d  loss=%.4f  lr=%.2e", epoch, step, loss_val, scheduler.get_last_lr()[0])
+                log.info("epoch=%d  step=%d  loss=%.4f  lr=%.2e", epoch, step, loss_val, optimizer.param_groups[0]["lr"])
 
 
         # Flush any leftover accumulated gradients at epoch end.
         if accum_count > 0:
-            util.optimizer_step(policy, optimizer, scheduler)
+            util.optimizer_step(policy, optimizer)
 
 
         # -- End of epoch: report metrics and checkpoint -----------------------
@@ -325,11 +321,15 @@ def train_loop_per_worker(config: dict):
         # ray.train.get_checkpoint() above -- automatic resume, zero user code.
         # See: https://docs.ray.io/en/latest/train/api/doc/ray.train.report.html
         avg_loss = epoch_loss_sum / max(epoch_loss_count, 1)
-        metrics = {"epoch": epoch, "steps": step, "loss": avg_loss, "lr": scheduler.get_last_lr()[0]}
+        metrics = {"epoch": epoch, "steps": step, "loss": avg_loss, "lr": optimizer.param_groups[0]["lr"]}
 
         if ray.train.get_context().get_world_rank() == 0:                  # <-- RAY TRAIN
             checkpoint = util.make_checkpoint(policy, optimizer, epoch, step)
-            ray.train.report(metrics, checkpoint=checkpoint)               # <-- RAY TRAIN
+            ray.train.report(
+                metrics,
+                checkpoint=checkpoint,
+                checkpoint_upload_mode=ray.train.CheckpointUploadMode.ASYNC,    
+            )               # <-- RAY TRAIN
         else:
             ray.train.report(metrics)                                      # <-- RAY TRAIN
 
@@ -347,17 +347,15 @@ def train_loop_per_worker(config: dict):
 import ray.train
 import ray.train.torch
 
-# GPU requirements:
-#   L40S (48 GB) -- batch_size=1, grad_accum=8 works well (default).
-#   A100 (80 GB) -- batch_size=4, grad_accum=2 works well.
+# GPU requirements (frozen backbone, only action heads trainable):
+#   L40S (48 GB) -- batch_size=2, grad_accum=4 (default below).
+#   A100 (80 GB) -- batch_size=4, grad_accum=2.
 train_loop_config = {
     "stats": stats,
-    "total_rows": LIMIT_ROWS if LIMIT_ROWS is not None else source.meta.total_frames,
-    "num_epochs": 2,
-    "batch_size": 1,
-    "grad_accum": 8,
+    "num_epochs": 8,
+    "batch_size": 2,
+    "grad_accum": 4,
     "lr":         1e-4,
-    "warmup_frac": 0.1,
     "max_len":    512,
 }
 
