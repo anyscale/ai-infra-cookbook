@@ -1,0 +1,38 @@
+# Anyscale Job configuration for Ray Train + Megatron-SWIFT training
+#
+# Submit with:
+#   anyscale job submit -f job.yaml --env HF_TOKEN=$HF_TOKEN
+
+name: swift-ray-train-sft
+max_retries: 0
+
+# Build image from local Dockerfile at submit time
+containerfile: ./Dockerfile
+cloud:
+
+# When empty, Anyscale will auto-select the instance types.
+compute_config:
+
+working_dir: .
+
+env_vars:
+  CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+  RAY_TRAIN_V2_ENABLED: "1"
+  NCCL_DEBUG: "WARN"
+  PYTHONUNBUFFERED: "1"
+
+entrypoint: |
+  python llm_sft_ray_train_swift.py \
+    --model Qwen/Qwen2.5-1.5B-Instruct \
+    --dataset "AI-ModelScope/alpaca-gpt4-data-en#500" \
+    --num_workers 4 \
+    --tensor_parallel_size 2 \
+    --pipeline_parallel_size 1 \
+    --train_iters 100 \
+    --save_interval 50 \
+    --log_interval 10 \
+    --micro_batch_size 1 \
+    --storage_path /mnt/local_storage \
+    --attention_backend auto \
+    --padding_free false

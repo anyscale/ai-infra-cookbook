@@ -1,0 +1,2 @@
+# Empty: all dependencies are in the Dockerfile.
+# This file overrides workspace dependency syncing when submitting from an Anyscale workspace.
