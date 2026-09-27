@@ -1,0 +1,77 @@
+# View the docs https://docs.anyscale.com/reference/service-api#serviceconfig.
+
+name: ray-sandbox-modal
+
+# Built when you deploy. The base is Ray's nightly image; Anyscale reads the
+# Ray version from it.
+containerfile: ./Dockerfile
+
+# Needs an Anyscale cloud on Kubernetes: the worker pods get the privileges
+# gVisor needs.
+compute_config:
+  head_node:
+    required_resources:
+      CPU: 8
+      memory: 32Gi
+    # Runs only Serve and the facade: with no CPUs to offer, sandboxes always
+    # land on the workers.
+    resources:
+      CPU: 0
+      GPU: 0
+      sandbox_facade: 1
+  worker_nodes:
+    - name: sandboxes
+      required_resources:
+        CPU: 8
+        memory: 32Gi
+      min_nodes: 1
+      max_nodes: 8
+      # What gVisor needs in the pod: root, AppArmor unconfined, and
+      # SYS_ADMIN and SYS_PTRACE for runsc; /dev/net/tun for slirp4netns; and
+      # no per-sandbox cgroups, which runsc can't create inside the pod.
+      advanced_instance_config:
+        spec:
+          containers:
+            - name: ray
+              env:
+                - name: RAY_SANDBOX_IGNORE_CGROUPS
+                  value: "1"
+              volumeMounts:
+                - name: dev-net-tun
+                  mountPath: /dev/net/tun
+              securityContext:
+                runAsUser: 0
+                appArmorProfile:
+                  type: Unconfined
+                capabilities:
+                  add: [SYS_ADMIN, SYS_PTRACE]
+          volumes:
+            - name: dev-net-tun
+              hostPath:
+                path: /dev/net/tun
+                type: CharDevice
+  auto_select_worker_config: false
+
+# Path to a local directory or a remote URI to a .zip file (S3, GS, HTTP) that
+# will be the working directory for the service. The files in the directory
+# will be automatically uploaded to the service environment in Anyscale.
+working_dir: .
+
+# When empty, this uses the default Anyscale Cloud in your organization.
+cloud:
+
+# The facade has no authentication of its own, so keep the service token on.
+query_auth_token_enabled: true
+
+# An Anyscale service routes one gRPC service name to Serve's gRPC proxy.
+# modal_relay.py sends every Modal SDK call under it.
+grpc_options:
+  service_names:
+    - modal.client.ModalClient
+  grpc_servicer_functions:
+    - modal_grpc.add_to_server
+
+applications:
+  - name: modal
+    route_prefix: /
+    import_path: modal_facade:app
