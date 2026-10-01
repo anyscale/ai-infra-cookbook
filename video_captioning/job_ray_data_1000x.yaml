@@ -1,0 +1,108 @@
+name: video-captioning-1000x-augmented
+
+containerfile: ./Dockerfile
+
+# Caption the 0.6 PB augmented corpus (INPUT_KIND=augment_manifest): ~70M
+# clips ≈ 3.4M video-hours ≈ ~900M caption windows. Fleet per the pool's
+# capacity: 1 turin-gp head + up to 199 turin-gp CPU workers (manifest reads
+# + GET/decode) + up to 200 × 8 RTX PRO 6000 GPU nodes (1,600 engines).
+# At the tuned pipeline's measured 32k captions/GPU-hour this is ~28k
+# GPU-hours ≈ 17-20 h on the full GPU fleet.
+compute_config:
+  cloud: rkn-gpu-cloud
+  cloud_resource: coreweave-use14a
+
+  advanced_instance_config:
+    metadata:
+      labels:
+        kueue.x-k8s.io/queue-name: default-queue
+
+  # turin-gp head: a 400-node cluster driving ~900M rows needs the big
+  # control plane — 64-CPU heads died twice at 1/5 of this node count.
+  head_node:
+    required_resources:
+      CPU: 180
+      memory: 1400Gi
+
+  worker_nodes:
+    # ── GPU pool: one Qwen3-VL-8B replica per RTX PRO 6000 (8 GPUs/node) ───
+    - required_resources:
+        CPU: 120
+        memory: 960Gi
+        GPU: 8
+      required_labels:
+        ray.io/accelerator-type: RTX-PRO-6000
+      advanced_instance_config:
+        metadata:
+          labels:
+            kueue.x-k8s.io/queue-name: default-queue
+      min_nodes: 1
+      max_nodes: 200
+
+    # ── CPU pool (turin-gp): manifest reads + fused GET/decode ─────────────
+    # Full-width pool; the GCS-overload lever is NOT node count but worker-
+    # process count, bounded by DECODE_CONCURRENCY (one Ray worker process
+    # spawns per concurrent 1-CPU task — uncapped decode wanted ~36k
+    # processes, whose registrations alone timed out the head's GCS).
+    - required_resources:
+        CPU: 180
+        memory: 1400Gi
+      labels:
+        cpu_only: "true"
+      advanced_instance_config:
+        metadata:
+          labels:
+            kueue.x-k8s.io/queue-name: default-queue
+      min_nodes: 1
+      max_nodes: 50
+
+working_dir: .
+
+env_vars:
+  AWS_ENDPOINT_URL: http://cwlota.com
+  AWS_ENDPOINT_URL_S3: http://cwlota.com
+  AWS_REGION: US-EAST-14A
+  AWS_DEFAULT_REGION: US-EAST-14A
+  RUNAI_STREAMER_S3_USE_VIRTUAL_ADDRESSING: "1"
+  INPUT_KIND: augment_manifest
+  EXPECTED_GPUS: "1600"
+  # Boot engines onto a stable fleet instead of racing Kueue's node trickle
+  # (ramp-wave boots produced startup-handshake timeouts), and absorb any
+  # residual boot flake as an actor replacement instead of a job death.
+  PREPROVISION_GPUS: "1"
+  TOLERATE_ENGINE_BOOT_FAILURES: "1"
+  # Stream-copied variants can exceed decord's default EOF retry budget on
+  # their trimmed tails; raise it instead of dropping those clips.
+  DECORD_EOF_RETRY_MAX: "65536"
+  # Fleet demand via node-shaped bundles at t0 (Ray Data's backpressured
+  # submission never surfaces demand on its own).
+  PREPROVISION_FLEET: "1"
+  FLEET_CPU_NODES: "50"
+  FLEET_GPU_NODES: "200"
+  # Decode concurrency sized to consumer demand (1,600 engines × ~0.11
+  # s/window consumed vs 2.2 s/clip decoded ≈ 1,600 needed; 2,400 = 1.5×
+  # margin). This bounds Ray worker-process count — the real GCS load — while
+  # the node pools stay at full width.
+  DECODE_CONCURRENCY: "2400"
+  # GCS join-storm patience. The fatal deadline in bring-up storms is the
+  # cluster-ID fetch: GetClusterId is served on GCS's single-threaded
+  # node_manager io_context behind RegisterNode/CheckAlive/GetAllNodeInfo,
+  # and DEADLINE_EXCEEDED is non-retryable (grpc_util.h) — so the 30 s
+  # py_gcs_connect_timeout_s is the knob that matters.
+  RAY_py_gcs_connect_timeout_s: "120"
+  RAY_gcs_rpc_server_reconnect_timeout_s: "300"
+  RAY_worker_register_timeout_seconds: "300"
+  # Pinned-high pool: boot failures are absorbed as actor replacements
+  # (TOLERATE_ENGINE_BOOT_FAILURES) so a wide floor is safe, and autoscaling
+  # policies freeze at low equilibria on bottomless queues.
+  POOL_FLOOR: "1500"
+  CAPTION_WINDOW_SEC: "12"
+
+# INPUT must point at the augmentation output root (contains manifest/ and
+# report.json):
+#   anyscale job submit -f job_ray_data_1000x.yaml \
+#     --env INPUT=s3://.../outputs/augment/<timestamp>
+entrypoint: python caption_ray_data.py ${NUM_VIDEOS:+--num-videos ${NUM_VIDEOS}} ${INPUT:+--input ${INPUT}} ${OUTPUT:+--output ${OUTPUT}}
+
+max_retries: 2
+timeout_s: 172800

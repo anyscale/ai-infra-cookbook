@@ -1,0 +1,55 @@
+name: video-captioning-caios-bench-cpu
+
+containerfile: ./Dockerfile
+
+# CPU-only variant of job_storage_bench.yaml, for measuring the ceilings a
+# GPU-free fleet (like the augmentation job's) actually gets. Note the fleet
+# asymmetry documented in BENCHMARK_1M.md: the fat LOTA cache path belongs to
+# GPU nodes (~25-30 GiB/s/node); CPU nodes measured ~5-7 GiB/s via LOTA but
+# ~12.6 GiB/s via the cwobject gateway. min == max for stable per-node numbers.
+compute_config:
+  cloud: rkn-gpu-cloud
+  cloud_resource: coreweave-use14a
+
+  advanced_instance_config:
+    metadata:
+      labels:
+        kueue.x-k8s.io/queue-name: default-queue
+
+  head_node:
+    required_resources:
+      CPU: 16
+      memory: 64Gi
+
+  worker_nodes:
+    - required_resources:
+        CPU: 120
+        memory: 480Gi
+      labels:
+        cpu_only: "true"
+      advanced_instance_config:
+        metadata:
+          labels:
+            kueue.x-k8s.io/queue-name: default-queue
+      min_nodes: 8
+      max_nodes: 8
+
+working_dir: .
+
+env_vars:
+  AWS_REGION: US-EAST-14A
+  AWS_DEFAULT_REGION: US-EAST-14A
+  BENCH_GPU_NODES: "0"
+  BENCH_CPU_NODES: "8"
+  BENCH_PASS_SECONDS: "45"
+  BENCH_READ: "1"
+  BENCH_WRITE: "1"
+  # Sweep around both documented optima: LOTA's 64-200/node band and the
+  # gateway's ~500/node peak; writes bracket the ~100/node latency knee.
+  BENCH_READ_CONC: "64,100,300,500"
+  BENCH_WRITE_CONC: "50,100,150"
+
+entrypoint: python storage_bench.py
+
+max_retries: 1
+timeout_s: 7200

@@ -1,0 +1,76 @@
+name: video-captioning-ray-data-256gpu
+
+containerfile: ./Dockerfile
+
+# CoreWeave US-EAST-14A via Anyscale. RTX PRO 6000 (Blackwell, 96 GB) GPUs,
+# 8 per node. The Kueue queue label is required for scheduling on this cluster.
+compute_config:
+  cloud: rkn-gpu-cloud
+  cloud_resource: coreweave-use14a
+
+  advanced_instance_config:
+    metadata:
+      labels:
+        kueue.x-k8s.io/queue-name: default-queue
+
+  # Head node is control-plane only (no GPU) — GPUs live in the worker pool.
+  head_node:
+    required_resources:
+      CPU: 32
+      memory: 128Gi
+
+  worker_nodes:
+    # ── GPU pool: one Qwen3-VL-8B replica per RTX PRO 6000 (8 GPUs/node) ───
+    # Autoscale from one node to the fleet requested by EXPECTED_GPUS:
+    #    8 GPUs (smoke) -> 1 node,   EXPECTED_GPUS=8
+    #   64 GPUs         -> 8 nodes,  EXPECTED_GPUS=64
+    #  256 GPUs         -> 32 nodes, EXPECTED_GPUS=256
+    - required_resources:
+        CPU: 120
+        memory: 960Gi
+        GPU: 8
+      required_labels:
+        ray.io/accelerator-type: RTX-PRO-6000
+      advanced_instance_config:
+        metadata:
+          labels:
+            kueue.x-k8s.io/queue-name: default-queue
+      min_nodes: 1
+      max_nodes: 32
+
+    # ── CPU-only pool: pinned mp4 shard reads ──────────────────────────────
+    # Reads are pinned here via the cpu_only label so multi-MB blobs never
+    # share RAM with vLLM. max_nodes stays 8 as an elastic ceiling; the knob
+    # that keeps this pool from over-scaling is the read tasks' num_cpus
+    # reservation in caption_ray_data.py. The Ray autoscaler scales on
+    # *reserved* CPUs of pending tasks, not on utilization — an IO-bound
+    # read that reserves a full core inflates demand ~4x and summons nodes
+    # that arrive after the ~2-minute read burst has already passed.
+    - required_resources:
+        CPU: 120
+        memory: 480Gi
+      labels:
+        cpu_only: "true"
+      advanced_instance_config:
+        metadata:
+          labels:
+            kueue.x-k8s.io/queue-name: default-queue
+      min_nodes: 1
+      max_nodes: 8
+
+working_dir: .
+
+env_vars:
+  AWS_ENDPOINT_URL: http://cwlota.com
+  AWS_ENDPOINT_URL_S3: http://cwlota.com
+  AWS_REGION: US-EAST-14A
+  AWS_DEFAULT_REGION: US-EAST-14A
+  RUNAI_STREAMER_S3_USE_VIRTUAL_ADDRESSING: "1"
+  EXPECTED_GPUS: "256"
+  # 12 s caption windows over FineVideo's ~12.4M video-seconds ≈ 1M captions.
+  CAPTION_WINDOW_SEC: "12"
+
+entrypoint: python caption_ray_data.py ${NUM_VIDEOS:+--num-videos ${NUM_VIDEOS}} ${INPUT:+--input ${INPUT}} ${OUTPUT:+--output ${OUTPUT}}
+
+max_retries: 2
+timeout_s: 86400
