@@ -1,0 +1,102 @@
+# NeMo Curator Image Semantic Deduplication Job
+# View the docs: https://docs.anyscale.com/reference/job-api#jobconfig
+#
+# This job runs a two-phase pipeline:
+#   Phase 1: Convert parquet (URLs) → WebDataset tar files (using Ray Data, distributed)
+#   Phase 2: Run NeMo Curator image deduplication (CLIP embeddings → semantic dedup)
+#
+# The parquet → tar conversion uses Ray Data to distribute image downloads
+# across all nodes in the cluster, providing much better scalability than
+# single-node processing.
+
+name: nemo-curator-image-dedup
+
+# Build custom image with NeMo Curator CUDA dependencies
+containerfile: ./Dockerfile
+
+# Declarative compute config — portable across clouds and Kubernetes
+# CPU-only head node + GPU worker nodes (using ignore_head_node=True in executors)
+# See: https://docs.anyscale.com/configuration/compute/declarative
+compute_config:
+  head_node:
+    required_resources:
+      CPU: 8
+      memory: 32Gi
+    resources:
+      CPU: 0  # Prevent any task scheduling on head node
+  worker_nodes:
+    - name: cpu-downloaders
+      required_resources:
+        CPU: 16
+        memory: 32Gi
+      min_nodes: 0
+      max_nodes: 10
+    - name: a10g-gpu-workers
+      required_resources:
+        CPU: 48
+        memory: 192Gi
+        GPU: 4
+      required_labels:
+        ray.io/accelerator-type: A10G
+      min_nodes: 1
+      max_nodes: 10
+
+# Working directory - use the repo root (absolute) so Curator/ is included
+working_dir: /home/ray/default
+
+# Environment variables for job configuration
+# Override these when submitting to use your own data paths
+env_vars:
+  # Input parquet files with image URLs (url and caption columns)
+  # Read directly from HuggingFace
+  INPUT_PARQUET: "hf://datasets/laion/relaion400m/"
+  MAX_ENTRIES: "10000000"
+  
+  # Directory for WebDataset tar files (created from parquet)
+  # Use /mnt/cluster_storage for persistence, or /home/ray/data for ephemeral
+  INPUT_WDS_DIR: "/mnt/cluster_storage/nemo_curator/webdataset"
+  
+  # Output directory for deduplicated images
+  OUTPUT_DIR: "/mnt/cluster_storage/nemo_curator/results"
+  
+  # Directory to store CLIP embeddings
+  EMBEDDINGS_DIR: "/mnt/cluster_storage/nemo_curator/embeddings"
+  
+  # Directory for duplicate removal parquets
+  REMOVAL_DIR: "/mnt/cluster_storage/nemo_curator/removal_ids"
+  
+  # Model weights directory (pre-downloaded in Docker image)
+  MODEL_DIR: "/home/ray/model_weights"
+  
+  # Processing settings
+  BATCH_SIZE: "64"
+  EMBEDDING_BATCH_SIZE: "64"
+  TAR_FILES_PER_PARTITION: "1"
+  ENTRIES_PER_TAR: "500"
+  # CPUs per reader task — controls max concurrent readers per node.
+  # 48 CPUs / 16 = 3 readers max.  This also prevents readers and embedding
+  # actors from running simultaneously on the same node, avoiding both
+  # system-RAM OOM (readers ~10-55 GB each) and GPU-VRAM OOM (reader
+  # processes create CUDA contexts that compete with CLIP model loading).
+  READER_CPUS_PER_TASK: "16"
+  
+  # Don't hide GPUs from tasks that request num_gpus=0 (needed for DALI)
+  RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO: "0"
+  
+  # Disable Python output buffering for real-time logs
+  PYTHONUNBUFFERED: "1"
+
+  # NCCL diagnostic output (also set as Dockerfile ENV for worker nodes)
+  NCCL_DEBUG: "WARN"
+
+
+# The entrypoint script (-u for unbuffered output)
+entrypoint: python -u examples/nemo_curator_semantic_dedup/image_dedup_example.py
+
+# Don't retry on failure - easier to debug
+max_retries: 0
+
+# Kill after 48 hours for full dataset (adjust based on dataset size)
+# Full relaion400m (~361M images) will take many hours
+timeout_s: 172800
+
