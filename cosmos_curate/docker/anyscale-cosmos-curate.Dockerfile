@@ -1,0 +1,225 @@
+# Dockerfile template for cosmos-curate
+#
+# The dockerfile is templated so that we can provide different conda env information.
+# Docs on docker best practices:
+# - https://linuxhandbook.com/dockerize-python-apps/
+# - https://uwekorn.com/2021/03/01/deploying-conda-environments-in-docker-how-to-do-it-right.html
+# - https://cloud.google.com/architecture/best-practices-for-building-containers
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+FROM nvcr.io/nvidia/cuda:12.9.1-devel-ubuntu24.04 AS main
+
+SHELL ["/bin/bash", "-c"]
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+ENV TZ=America/Los_Angeles
+# Get system level packages
+RUN apt-get update \
+    && apt-get install -y \
+    # Needed for opencv
+    libsm6 libxext6 \
+    # Needed because the certs age out sometimes?
+    ca-certificates \
+    # Needed for installing pixi \
+    wget \
+    # Needed for pip install \
+    git \
+    # Needed for cuda profiling \
+    nsight-systems-2025.3.2 \
+    --option=Dpkg::Options::=--force-confdef \
+    # Needed to copy model weights using rsync
+    rsync \
+    && update-ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# GPU-accelerated ffmpeg (also needed for opencv)
+ENV FFMPEG_VERSION=7.0.1 \
+    NVCODEC_VERSION=12.1.14.0
+RUN mkdir -p /tmp && chmod 1777 /tmp && \
+    apt-get update && \
+    apt-get install -y \
+    libcrypt-dev \
+    autoconf \
+    automake \
+    build-essential \
+    cmake \
+    libaom-dev \
+    libass-dev \
+    libdav1d-dev \
+    libdrm-dev \
+    libfreetype6-dev \
+    libgnutls28-dev \
+    libnuma-dev \
+    libopenh264-dev \
+    libtool \
+    libva-dev \
+    libvorbis-dev \
+    libvpx-dev \
+    libwebp-dev \
+    pkg-config \
+    texinfo \
+    vainfo \
+    yasm \
+    zlib1g-dev && \
+    wget -O /tmp/nv-codec-headers.tar.gz https://github.com/FFmpeg/nv-codec-headers/releases/download/n${NVCODEC_VERSION}/nv-codec-headers-${NVCODEC_VERSION}.tar.gz && \
+    tar xzvf /tmp/nv-codec-headers.tar.gz -C /tmp/ && \
+    cd /tmp/nv-codec-headers-${NVCODEC_VERSION} && \
+    make && \
+    make install && \
+    wget -O /tmp/ffmpeg-snapshot.tar.bz2 https://www.ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 && \
+    tar xjvf /tmp/ffmpeg-snapshot.tar.bz2 -C /tmp/ && \
+    cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
+    PATH="/usr/local/cuda/bin:$PATH" \
+    ./configure \
+    --prefix=/usr/local \
+    --enable-nonfree \
+    --enable-cuda-nvcc \
+    --enable-libnpp \
+    --enable-libopenh264 \
+    --enable-libaom \
+    --enable-libdav1d \
+    --enable-libvorbis \
+    --enable-libvpx \
+    --enable-libwebp \
+    --enable-vaapi \
+    --extra-cflags=-I/usr/local/cuda/include \
+    --extra-ldflags=-L/usr/local/cuda/lib64 \
+    --extra-libs=-lpthread \
+    --extra-libs=-lm \
+    --disable-static \
+    --enable-shared \
+    --disable-doc \
+    --disable-debug && \
+    make -j$(nproc) && \
+    make install && \
+    ldconfig && \
+    # Clean up
+    cd / && \
+    rm -rf /tmp/ffmpeg* && \
+    rm -rf /tmp/nv-codec-headers* && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install pixi
+RUN wget -qO- https://pixi.sh/install.sh | PIXI_HOME=/usr/local PIXI_NO_PATH_UPDATE=1 sh
+
+# Common ENV variables needed by some ML libs
+ENV AM_I_DOCKER=True \
+    BUILD_WITH_CUDA=True \
+    TORCH_CUDA_ARCH_LIST="8.0;8.6;9.0;10.0+PTX" \
+    CUDA_HOME="/usr/local/cuda" \
+    XFORMERS_IGNORE_FLASH_VERSION_CHECK="1" \
+    VLLM_WORKER_MULTIPROC_METHOD="spawn" \
+    VLLM_USE_V1="1"
+
+# Disable Ray log dedup
+ENV RAY_DEDUP_LOGS=0 \
+    RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1 \
+    RAY_MAX_LIMIT_FROM_API_SERVER=40000 \
+    RAY_MAX_LIMIT_FROM_DATA_SOURCE=40000 \
+    RAY_DEFAULT_OBJECT_STORE_MAX_MEMORY_BYTES=800000000000 \
+    RAY_DEFAULT_OBJECT_STORE_MEMORY_PROPORTION=0.4 \
+    RAY_gcs_rpc_server_connect_timeout_s=30 \
+    RAY_gcs_rpc_server_reconnect_timeout_s=180 \
+    RAY_WARN_BLOCKING_GET_INSIDE_ASYNC=0 \
+    XENNA_RAY_METRICS_PORT=9002
+
+# boto3 & pbss
+ENV AWS_REQUEST_CHECKSUM_CALCULATION='when_required'
+
+# Set a bunch of env vars so that we cache weights in a workspace
+ENV DEFAULT_WORKSPACE_LOC="/config/default_workspace"
+ENV HF_HOME="${DEFAULT_WORKSPACE_LOC}/weights/hf_home/" \
+    LAION_CACHE_HOME="${DEFAULT_WORKSPACE_LOC}/weights/laion_cache/"
+
+# Set up pixi environments
+COPY pixi.toml pixi.lock /opt/cosmos-curate/
+
+
+# ==========================================================================
+# Anyscale compatibility layer
+# Ref: https://docs.anyscale.com/container-image/image-requirement.md
+#
+# Everything above runs as root. Everything below runs as ray. Critically the pixi envs need to be ray owned.
+# ==========================================================================
+
+# Anyscale system packages
+RUN set -euxo pipefail \
+    && apt-get update -y \
+    && apt-get install -y --no-install-recommends \
+        sudo \
+        tzdata \
+        openssh-client \
+        openssh-server \
+        zip \
+        unzip \
+        gdb \
+        curl \
+        vim \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/run/sshd
+
+# Rename ubuntu (uid 1000) -> ray and align with Anyscale requirements
+# (uid 1000, gid 100, passwordless sudo).
+RUN set -euxo pipefail \
+    && groupmod -n ray users \
+    && usermod -l ray -d /home/ray -m ubuntu \
+    && usermod -u 1000 -g 100 ray \
+    && usermod -aG sudo ray \
+    && echo 'ray ALL=NOPASSWD: ALL' >> /etc/sudoers \
+    && chown -R ray:ray /home/ray \
+    && chown ray:ray /opt/cosmos-curate
+
+USER ray
+
+# ---------- pixi environments (owned by ray, no chown needed) ----------
+# If we install all the environments in a single layer, it's over 20GB and will cause slurm/NVCF to timeout pulling the
+# layer. Since the cuml environment is large and needs non-overlapping RAPIDS packages, we install it separately.
+RUN cd /opt/cosmos-curate && \
+    export CONDA_OVERRIDE_CUDA=12.9.1 && \
+    pixi install -e default -e legacy-transformers -e model-download -e transformers -e unified --frozen && \
+    pixi clean cache -y
+
+# ---------- Anyscale Python packages ----------
+# This also validates ray has write access to the pixi environments.
+RUN set -euxo pipefail \
+    && cd /opt/cosmos-curate \
+    && pixi run -e default pip install --no-cache-dir \
+        anyscale \
+        packaging \
+        boto3 \
+        google \
+        google-cloud-storage \
+        terminado \
+    && pixi run -e default pip install --no-cache-dir jupyterlab
+
+RUN cd /tmp \
+    && curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip \
+    && unzip -q awscliv2.zip \
+    && sudo ./aws/install \
+    && rm -rf aws awscliv2.zip
+
+# ---------- cosmos-curate source code ----------
+COPY --chown=ray:ray cosmos_curate /opt/cosmos-curate/cosmos_curate
+COPY --chown=ray:ray tests /opt/cosmos-curate/tests
+COPY --chown=ray:ray pytest.ini .coveragerc /opt/cosmos-curate/
+
+# Workspace shell setup (Anyscale workspace requirement).
+RUN set -euxo pipefail \
+    && echo 'PROMPT_COMMAND="history -a"' >> /home/ray/.bashrc \
+    && echo '[ -e ~/.workspacerc ] && source ~/.workspacerc' >> /home/ray/.bashrc
+
+RUN sudo mkdir -p /cosmos_curate/config /config /anyscale/init \
+    && sudo chown -R ray:ray /cosmos_curate /config /anyscale/init
+
+# Model registry needed by cosmos-curate at import time
+COPY cosmos_curate/configs/all_models.json /opt/cosmos-curate/cosmos_curate/configs/all_models.json
+
+ENV PATH=/opt/cosmos-curate/.pixi/envs/default/bin:$PATH \
+    HOME=/home/ray \
+    PIXI_PROJECT_MANIFEST=/opt/cosmos-curate/pixi.toml
+WORKDIR /home/ray
+
+ENTRYPOINT []
+CMD ["bash"]

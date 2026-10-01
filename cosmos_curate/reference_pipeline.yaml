@@ -1,0 +1,24 @@
+name: cosmos-curate-reference-pipeline
+image_uri: 367974485317.dkr.ecr.us-west-2.amazonaws.com/anyscale-cosmos-curate:6
+ray_version: 2.48.0
+entrypoint: >
+  python all_nodes_init_script.py qwen2.5_vl,transnetv2,internvideo2_mm,bert
+  && pixi run python -m cosmos_curate.pipelines.video.run_pipeline split
+  --input-video-path "s3://ray-example-data/videos/Hollywood2-actions-videos/Hollywood2/AVIClips/"
+  --output-clip-path "/mnt/user_storage/output_clips/"
+py_modules: ["./cosmos-curate"]
+compute_config:
+  head_node:
+    instance_type: m5.2xlarge
+    resources:
+      CPU: 8
+      GPU: 0
+    flags: {}
+  worker_nodes:
+    - instance_type: g6e.4xlarge
+      flags: {}
+      min_nodes: 4
+      max_nodes: 4
+      market_type: ON_DEMAND
+working_dir: "."
+max_retries: 0
