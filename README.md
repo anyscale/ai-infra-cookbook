@@ -59,6 +59,7 @@ Curated trails through the map. Follow one top to bottom — each stop builds on
 | Example | What it shows | Open-source stack | Runs as |
 |---|---|---|---|
 | [skyrl](skyrl/) | GRPO on GSM8K with colocated vLLM rollout engines | SkyRL, vLLM, Ray | job |
+| [ray_sandbox_modal_api](ray_sandbox_modal_api/) | Run Modal SDK sandbox code in gVisor sandboxes on a Ray cluster | Ray Sandbox, gVisor, Ray Serve, Modal SDK | service |
 
 ### 4 · Serve — production inference, from one GPU to MoE fleets
 
@@ -106,6 +107,8 @@ This cookbook exists because of the open-source projects below. Each example's R
 | [Run:ai Model Streamer](https://github.com/run-ai/runai-model-streamer) | Concurrent weight streaming to GPU | fast_model_loading_gcs_nvme |
 | [Gradio](https://github.com/gradio-app/gradio) | Interactive ML UIs | video_generation_with_fastvideo |
 | [Locust](https://github.com/locustio/locust) | Load testing | wide_ep_fault_tolerance |
+| [gVisor](https://github.com/google/gvisor) | User-space kernel that isolates each sandbox | ray_sandbox_modal_api |
+| [Modal SDK](https://github.com/modal-labs/modal-client) | Client whose sandbox API the Ray facade serves | ray_sandbox_modal_api |
 
 
 
