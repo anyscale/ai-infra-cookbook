@@ -1,0 +1,19 @@
+[project]
+name = "stop-time-diagnostics"
+version = "0.1.0"
+description = "GPU health and NCCL communication diagnostics for Ray clusters"
+requires-python = ">=3.10"
+dependencies = [
+    "ray[default]==2.52.0",
+    "torch>=2.0.0",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
