@@ -1,0 +1,50 @@
+# Anyscale Job: Ray Train + FSDP2 + DTensor Tensor Parallelism
+# This job runs training with PyTorch native FSDP2 + DTensor for tensor parallelism
+#
+# Submit with: anyscale job submit -f job.yaml
+# Or with custom args: anyscale job submit -f job.yaml --entrypoint "python train.py --tp_size 4 --dp_size 2 --num_workers 8"
+
+name: train-tp-fsdp-dtensor
+
+entrypoint: >
+  python train.py
+  --model_name Qwen/Qwen2.5-0.5B
+  --tp_size 2
+  --dp_size 2
+  --num_workers 4
+  --dataset_name wikitext
+  --dataset_percentage 1.0
+  --batch_size 2
+  --seq_length 1024
+  --num_epochs 1
+  --learning_rate 1e-5
+  --log_interval 1
+  --debug_steps 100
+
+image_uri: anyscale/ray:2.53.0-py312-cu128
+
+working_dir: .
+
+requirements:
+  - torch>=2.9.1
+  - transformers>=4.45.0
+  - datasets>=3.0.0
+  - accelerate>=1.0.0
+
+compute_config:
+  head_node:
+    instance_type: m5.xlarge
+  worker_nodes:
+    - instance_type: g4dn.12xlarge
+      min_nodes: 1
+      max_nodes: 1
+
+env_vars:
+  RAY_TRAIN_V2_ENABLED: "1"
+  HF_HOME: /mnt/cluster_storage/huggingface
+
+max_retries: 0
+
+tags:
+  project: tensor-parallelism
+  framework: fsdp
