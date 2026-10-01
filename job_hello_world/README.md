@@ -20,11 +20,11 @@ anyscale login
 Clone the example from GitHub.
 
 ```bash
-git clone https://github.com/anyscale/examples.git
-cd examples/job_hello_world
+git clone https://github.com/anyscale/ai-infra-cookbook.git
+cd ai-infra-cookbook/job_hello_world
 ```
 
-The code in [main.py](https://github.com/anyscale/examples/blob/main/job_hello_world/main.py) runs 100 tasks that each take a number and square it.
+The code in [main.py](https://github.com/anyscale/ai-infra-cookbook/blob/main/job_hello_world/main.py) runs 100 tasks that each take a number and square it.
 
 ```python
 import os

@@ -5,7 +5,7 @@ name: my-first-job
 # When empty, use the default image. This can be an Anyscale-provided base image
 # like anyscale/ray:2.43.0-slim-py312-cu125, a user-provided base image (provided
 # that it meets certain specs), or you can build new images using the Anyscale
-# image builder at https://console.anyscale-staging.com/v2/container-images.
+# image builder at https://console.anyscale.com/v2/container-images.
 image_uri:  # anyscale/ray:2.43.0-slim-py312-cu125
 
 # When empty, Anyscale will auto-select the instance types. You can also specify
