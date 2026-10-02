@@ -14,8 +14,8 @@ anyscale login
 Clone the example from GitHub.
 
 ```
-git clone https://github.com/anyscale/examples.git
-cd examples/video_generation_with_fastvideo
+git clone https://github.com/anyscale/ai-infra-cookbook.git
+cd ai-infra-cookbook/video_generation_with_fastvideo
 ```
 
 Deploy the service.
@@ -39,6 +39,14 @@ Once the service is deployed, you can view the Gradio UI by pasting the appropri
 From there, you can generate videos by tweaking the prompt and the number of inference steps.
 
 By default, this example uses L4 GPUs and so generation is quite slow (3 inference steps can take around 90 seconds). On an H100, a 5 second video can be generated in around 5 seconds.
+
+## Shut down the service
+
+The service runs on a GPU and is publicly reachable (`query_auth_token_enabled: false` in `service.yaml`), so terminate it when you're done:
+
+```
+anyscale service terminate -n deploy-fast-video
+```
 
 ## Understanding the example
 
