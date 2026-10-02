@@ -18,11 +18,11 @@ anyscale login
 Clone the example from GitHub.
 
 ``` bash
-git clone https://github.com/anyscale/examples.git
-cd examples/service_hello_world
+git clone https://github.com/anyscale/ai-infra-cookbook.git
+cd ai-infra-cookbook/service_hello_world
 ```
 
-The code for an endpoint that says "hello" is in [main.py](https://github.com/anyscale/examples/blob/main/service_hello_world/main.py).
+The code for an endpoint that says "hello" is in [main.py](https://github.com/anyscale/ai-infra-cookbook/blob/main/service_hello_world/main.py).
 
 Also take a look at `service.yaml`. This file specifies the container image, compute resources, script entrypoint, and a few other fields.
 
@@ -37,6 +37,8 @@ anyscale service deploy -f ./service.yaml
 Once the service is running, query it as follows:
 
 ```python
+from urllib.parse import urljoin
+
 import requests
 
 # The "anyscale service deploy" script outputs a line that looks like
@@ -48,7 +50,7 @@ token = <SERVICE_TOKEN>  # Fill this in.
 base_url = <BASE_URL>  # Fill this in.
 
 resp = requests.get(
-    f"{base_url}/hello",
+    urljoin(base_url, "hello"),
     params={"name": "Theodore"},
     headers={"Authorization": f"Bearer {token}"})
 
